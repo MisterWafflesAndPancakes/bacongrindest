@@ -446,6 +446,25 @@ return function()
 	-- Services
 	local RunService = game:GetService("RunService")
 	
+	-- Restart Delay Parameters
+	local ROLE1_TIMEOUT       = 15   -- watchdog window before restart logic
+	local ROLE1_EXTRA_DELAY   = 10   -- added to average cycle
+	local ROLE1_MIN_DELAY     = 10  -- minimum enforced delay
+	
+	local ROLE2_EXTRA_DELAY   = 25   -- added to average cycle
+	local ROLE2_MIN_DELAY     = 25   -- minimum enforced delay
+	local ROLE2_OFFSET        = -2   -- restart 2s earlier than baseline (tweak as needed)
+	
+	-- Delay Helper
+	local function computeRestartDelay(role, avg)
+	    if role == 1 then
+	        return math.max((avg or 0) + ROLE1_EXTRA_DELAY, ROLE1_MIN_DELAY)
+	    elseif role == 2 then
+	        local base = math.max((avg or 0) + ROLE2_EXTRA_DELAY, ROLE2_MIN_DELAY)
+	        return math.max(base + ROLE2_OFFSET, 0)
+	    end
+	end
+	
 	-- Record a completed cycle (ignore role 3 entirely)
 	local function recordCycle(role)
 	    if role ~= 1 and role ~= 2 then return end
@@ -540,6 +559,7 @@ return function()
 	    if role == 1 then
 	        -- Reset state fresh each session
 	        won, timeoutElapsed = false, false
+	        local lastWinTime = nil
 	
 	        winConnection = SoundEvent.OnClientEvent:Connect(function(action, data)
 	            if activeRole ~= 1 then return end
@@ -547,36 +567,32 @@ return function()
 	                if data.Name == "Win" or data.Name == "WinP1" then
 	                    won = true
 	                    timeoutElapsed = false
-	                    -- Reset won after a short delay so the next watchdog can run
-	                    task.delay(1, function()
-	                        if activeRole == 1 then
-	                            won = false
-	                        end
-	                    end)
+	                    lastWinTime = os.clock()
 	                end
 	            end
 	        end)
 	
 	        if not role1WatchdogArmed and activeRole == 1 then
 	            role1WatchdogArmed = true
-	            print("⌚ Role 1 watchdog armed (15s window)")
+	            print(("⌚ Role 1 watchdog armed (%ds window)"):format(ROLE1_TIMEOUT))
 	
 	            task.spawn(function()
 	                local startTime = os.clock()
-	                local windowSeconds = 15
 	
-	                while os.clock() - startTime < windowSeconds do
+	                while os.clock() - startTime < ROLE1_TIMEOUT do
 	                    if activeRole ~= 1 then
 	                        return -- bail if role changed
 	                    end
 	                    waitSeconds(0.1)
 	                end
 	
-	                if not won and activeRole == 1 then
+	                -- Timeout only if no win occurred during the watchdog window
+	                if (not lastWinTime or lastWinTime < startTime) and activeRole == 1 then
 	                    timeoutElapsed = true
 	                    local avg = getCycleAverage(1) or (configs[1] and configs[1].cycleDelay) or 0
-	                    local delay = math.max((avg or 0) + 9, 22)
-	                    print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+9)"):format(delay, avg or 0))
+	                    local delay = computeRestartDelay(1, avg)
+	                    print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+%d)")
+	                        :format(delay, avg or 0, ROLE1_EXTRA_DELAY))
 	                    restartRole(1, delay)
 	                end
 	            end)
@@ -595,9 +611,9 @@ return function()
 	                    end
 	
 	                    local avg = getCycleAverage(2) or (configs[2] and configs[2].cycleDelay) or 0
-	                    local delay = math.max((avg or 0) + 22, 24)
-	                    print(("⚠️ Role 2 win detected! restarting after %.2fs (avg=%.3f+22) [event=%s]")
-	                        :format(delay, avg or 0, tostring(data.Name)))
+	                    local delay = computeRestartDelay(2, avg)
+	                    print(("⚠️ Role 2 win detected! restarting after %.2fs (avg=%.3f+%d, offset=%ds) [event=%s]")
+	                        :format(delay, avg or 0, ROLE2_EXTRA_DELAY, ROLE2_OFFSET, tostring(data.Name)))
 	                    restartRole(2, delay)
 	                end
 	            end
@@ -635,7 +651,7 @@ return function()
 	
 	    local index = 1
 	    local phase = "teleport"
-	    local phaseStart = os.clock()         -- anchor to absolute time
+	    local phaseStart = os.clock() -- anchor to absolute time
 	    local teleported = false
 	
 	    -- track HRP without yielding
@@ -710,110 +726,71 @@ return function()
 	        end
 	    end)
 	end
-
+	
 	local Players = game:GetService("Players")
 	
-	local soloMonitorActive = false
-	local soloAddedConn
-	local soloPresenceTask
+	local graceSeconds = 12
 	
-	local function stopSoloMonitor()
-	    soloMonitorActive = false
-	    if soloAddedConn and soloAddedConn.Connected then
-	        soloAddedConn:Disconnect()
+	local function startSoloMonitor(partnerName)
+	    -- Only run if this client is Role 1 and active
+	    if activeRole ~= 1 or not isActive then
+	        return
 	    end
-	    soloAddedConn = nil
-	    soloPresenceTask = nil
-	end
 	
-	local function startSoloFallback()
-	    if activeRole ~= 1 or not isActive then return end
-	    if soloMonitorActive then return end
-	    soloMonitorActive = true
-	
-	    local partnerName = usernameBox and usernameBox.Text or ""
-	    if partnerName == "" then
-	        print("⚠️ No partner name provided, switching to solo.")
-	        stopSoloMonitor()
+	    if not partnerName or partnerName == "" then
+	        warn("⚠️ No partner name provided, switching to solo immediately")
 	        if handleSoloClick then task.defer(handleSoloClick) end
 	        return
 	    end
 	
-	    local function findByName(name)
-	        for _, plr in ipairs(Players:GetPlayers()) do
-	            if plr.Name == name then
-	                return plr
-	            end
-	        end
-	        return nil
-	    end
-	
+	    local stablePartnerId = nil
+	    local graceEnd = nil
+	    local inGrace = false
 	    local soloTriggered = false
+	
 	    local function switchToSolo(reason)
 	        if soloTriggered then return end
 	        soloTriggered = true
-	        stopSoloMonitor()
-	        print(("⚠️ %s .switching to SOLO"):format(reason))
+	        print(("⚠️ %s → switching to SOLO"):format(reason))
 	        if handleSoloClick then task.defer(handleSoloClick) end
 	    end
 	
-	    soloPresenceTask = true
 	    task.spawn(function()
-	        local stablePartnerId
-	        local inGrace = false
-	        local graceEnd = 0
-	
-	        while soloMonitorActive and not soloTriggered and activeRole == 1 and isActive do
-	            local partner = findByName(partnerName)
-	            if partner and not stablePartnerId then
-	                stablePartnerId = partner.UserId
-	            end
-	
+	        while not soloTriggered and activeRole == 1 and isActive do
+	            local partner = Players:FindFirstChild(partnerName)
 	            if partner then
-	                -- Partner present: cancel grace
-	                inGrace = false
-	                graceEnd = 0
-	                if soloAddedConn and soloAddedConn.Connected then
-	                    soloAddedConn:Disconnect()
-	                    soloAddedConn = nil
-	                end
+	                stablePartnerId = stablePartnerId or partner.UserId
+	                inGrace, graceEnd = false, nil
 	            else
-	                -- Partner absent
 	                if not inGrace then
-	                    print("⚠️ Partner missing! 12s grace window started")
+	                    print(("⚠️ Partner %s missing! %ds grace window started"):format(partnerName, graceSeconds))
 	                    inGrace = true
-	                    graceEnd = os.clock() + 12
+	                    graceEnd = os.clock() + graceSeconds
 	
-	                    if soloAddedConn and soloAddedConn.Connected then
-	                        soloAddedConn:Disconnect()
-	                    end
-	                    soloAddedConn = Players.PlayerAdded:Connect(function(newPlr)
-	                        if not soloMonitorActive or not inGrace then return end
+	                    local conn
+	                    conn = Players.PlayerAdded:Connect(function(newPlr)
+	                        if not inGrace then return end
 	                        if (stablePartnerId and newPlr.UserId == stablePartnerId)
-	                           or newPlr.Name == partnerName then
-	                            print("✅ Partner rejoined within 12s, staying in duos mode")
-	                            inGrace = false
-	                            graceEnd = 0
-	                            if soloAddedConn and soloAddedConn.Connected then
-	                                soloAddedConn:Disconnect()
-	                            end
-	                            soloAddedConn = nil
+	                           or newPlr.Name:lower() == partnerName:lower() then
+	                            print("✅ Partner rejoined within grace window, staying in duo mode")
+	                            inGrace, graceEnd = false, nil
+	                            if conn then conn:Disconnect() end
 	                        end
 	                    end)
 	                elseif os.clock() >= graceEnd then
-	                    switchToSolo("Partner did not return within 12s")
+	                    switchToSolo("Partner did not return within grace window")
 	                    break
 	                end
 	            end
-	
-	            waitSeconds(0.25)
+	            task.wait(0.25)
 	        end
 	    end)
 	end
 	
-	-- Integration
+	-- Integration: only call if Role 1 is active
 	if activeRole == 1 and isActive then
-	    startSoloFallback()
+	    local partnerName = usernameBox and usernameBox.Text or ""
+	    startSoloMonitor(partnerName)
 	end
 	
 	-- Reset cycle tracking for a given role (roles 1 & 2 only)
