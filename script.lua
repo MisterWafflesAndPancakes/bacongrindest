@@ -912,4 +912,8 @@ return function()
 	    -- Start the SOLO loop
 	    runLoop(3)
 	end
+
+	-- Make button work pls 🥺
+	onOffButton.MouseButton1Click:Connect(handleOnOffClick)
+	soloButton.MouseButton1Click:Connect(handleSoloClick)
 end
