@@ -630,7 +630,7 @@ return function()
 	    end
 	end
 					
-	-- Core loop (drift-proofed + fixed HRP tracker)
+	-- Core loop (drift-proofed + catch-up + HRP tracker)
 	function runLoop(role)
 	    local points = role == 1 and {
 	        workspace.Spar_Ring1.Player1_Button.CFrame,
@@ -658,92 +658,96 @@ return function()
 	
 	    local index = 1
 	    local phase = "teleport"
-	    local phaseStart = os.clock() -- anchor to absolute time
+	    local phaseStart = os.clock()
 	    local teleported = false
 	
-	-- Track HRP without yielding (better version)
-	local hrp
-	local hrpAddedConn, hrpRemovedConn
+	    -- Track HRP without yielding
+	    local hrp
+	    local hrpAddedConn, hrpRemovedConn
 	
-	local function updateHRP(char)
-	    -- clean up old listeners
-	    if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
-	    if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
-	    hrp = nil
+	    local function updateHRP(char)
+	        if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
+	        if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
+	        hrp = nil
 	
-	    if not char then return end
+	        if not char then return end
+	        hrp = char:FindFirstChild("HumanoidRootPart")
 	
-	    -- try immediately
-	    hrp = char:FindFirstChild("HumanoidRootPart")
+	        hrpAddedConn = char.ChildAdded:Connect(function(child)
+	            if child.Name == "HumanoidRootPart" then
+	                hrp = child
+	            end
+	        end)
 	
-	    -- watch for future insertions
-	    hrpAddedConn = char.ChildAdded:Connect(function(child)
-	        if child.Name == "HumanoidRootPart" then
-	            hrp = child
-	        end
-	    end)
-	
-	    -- watch for removal
-	    hrpRemovedConn = char.ChildRemoved:Connect(function(child)
-	        if child == hrp then
-	            hrp = nil
-	        end
-	    end)
-	end
-	
-	-- initial + respawn tracking
-	if player.Character then
-	    updateHRP(player.Character)
-	end
-	player.CharacterAdded:Connect(updateHRP)
-	
-	-- heartbeat loop
-	if loopConnection and loopConnection.Connected then
-	    loopConnection:Disconnect()
-	    loopConnection = nil
-	end
-	
-	loopConnection = RunService.Heartbeat:Connect(function()
-	    if activeRole ~= role or not isActive then
-	        loopConnection:Disconnect()
-	        loopConnection = nil
-	        return
+	        hrpRemovedConn = char.ChildRemoved:Connect(function(child)
+	            if child == hrp then
+	                hrp = nil
+	            end
+	        end)
 	    end
 	
-	    local now = os.clock()  -- always capture time, even if hrp is nil
-				
-	        -- Teleport phase
-	        if phase == "teleport" and now >= phaseStart + config.teleportDelay then
+	    if player.Character then
+	        updateHRP(player.Character)
+	    end
+	    player.CharacterAdded:Connect(updateHRP)
+	
+	    if loopConnection and loopConnection.Connected then
+	        loopConnection:Disconnect()
+	        loopConnection = nil
+	    end
+	
+	    loopConnection = RunService.Heartbeat:Connect(function()
+	        if activeRole ~= role or not isActive then
+	            loopConnection:Disconnect()
+	            loopConnection = nil
+	            return
+	        end
+	
+	        local now = os.clock()
+	
+	        -- teleport phase
+	        while phase == "teleport" and now >= phaseStart + config.teleportDelay do
 	            if hrp then
 	                hrp.CFrame = points[index]
 	                teleported = true
 	                phase = "kill"
-	                phaseStart += config.teleportDelay  
 	            end
+	            phaseStart += config.teleportDelay
+	        end
 	
-	        -- Kill phase
-	        elseif phase == "kill" and now >= phaseStart + config.deathDelay and teleported then
-	            local char = player.Character
-	            if char then
-	                pcall(function() char:BreakJoints() end)
+	        -- kill phase
+	        while phase == "kill" and now >= phaseStart + config.deathDelay do
+	            if teleported then
+	                local char = player.Character
+	                if char then
+	                    pcall(function() char:BreakJoints() end)
+	                end
+	                teleported = false
+	                phase = "respawn"
 	            end
-	            teleported = false
-	            phase = "respawn"
-	            phaseStart += config.deathDelay 
+	            phaseStart += config.deathDelay
+	        end
 	
-	        -- Respawn phase
-	        elseif phase == "respawn" then
+	        -- rewspawn phase
+	        if phase == "respawn" then
+	            -- give HRP up to 5s to appear
 	            if hrp then
 	                if (role == 1 or role == 2) and recordCycle then
 	                    recordCycle(role)
 	                end
 	                phase = "wait"
+	                phaseStart = now
+	            elseif now >= phaseStart + 5 then
+	                warn("Respawn timeout, forcing wait phase")
+	                phase = "wait"
+	                phaseStart = now
 	            end
+	        end
 	
-	        -- Waiting phase
-	        elseif phase == "wait" and now >= phaseStart + config.cycleDelay then
+	        -- wait phase
+	        while phase == "wait" and now >= phaseStart + config.cycleDelay do
 	            phase = "teleport"
-	            phaseStart += config.cycleDelay        
+	            phaseStart += config.cycleDelay
 	            index = index % #points + 1
 	        end
 	    end)
