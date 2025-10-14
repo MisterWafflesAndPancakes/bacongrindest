@@ -372,67 +372,6 @@ return function()
 		end
 	end)
 	
-	-- Rolling buffers (10 cycles) for roles 1 & 2 only
-	local cycleDurations10 = { [1] = {}, [2] = {} }
-	local lastCycleTime    = { [1] = nil, [2] = nil }
-	
-	-- Restart tokens for roles 1 & 2 only
-	local restartToken     = { [1] = 0, [2] = 0 }
-	
-	-- Force toggle off helper
-	local function forceToggleOff()
-	    -- Disconnect loop + win listener(s)
-	    if loopConnection and loopConnection.Connected then
-	        loopConnection:Disconnect()
-	        loopConnection = nil
-	    end
-	    if winConnection and winConnection.Connected then
-	        winConnection:Disconnect()
-	        winConnection = nil
-	    end
-	
-	    -- Disconnect HRP listeners if they exist
-	    if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
-	    if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
-	    hrp = nil
-	
-	    -- If you stored CharacterAdded in a variable, clean it too:
-	    if charAddedConn then charAddedConn:Disconnect() charAddedConn = nil end
-	
-	    -- Reset cycle tracking + restart tokens for roles 1 & 2 only
-	    for r = 1, 2 do
-	        cycleDurations10[r] = {}
-	        lastCycleTime[r] = nil
-	        restartToken[r] = 0
-	    end
-	
-	    -- Reset state flags
-	    activeRole = nil
-	    isActive = false
-	    won = false
-	    timeoutElapsed = false
-	
-	    -- Kill Role 1 watchdog threads cleanly
-	    role1WatchdogArmed = false
-	    watchdogToken[1] = (watchdogToken[1] or 0) + 1
-	
-	    -- If you have a solo monitor loop, this ensures it bails
-	    soloMonitorActive = false
-	
-	    -- UI feedback (guard in case buttons aren’t ready yet)
-	    if onOffButton then
-	        onOffButton.Text = "OFF"
-	        onOffButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
-	    end
-	    if soloButton then
-	        soloButton.Text = "SOLO"
-	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
-	        soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
-	    end
-	
-	    print("Script stopped")
-	end
-	
 	-- Button connections
 	onOffButton.MouseButton1Click:Connect(function()
 	    if handleOnOffClick then
@@ -449,9 +388,6 @@ return function()
 	        print("SOLO clicked but handler not ready yet")
 	    end
 	end)
-	
-	-- Cold start reset (initialise state once at load)
-	forceToggleOff()
 	
 	-- Configs
 	local configs = {
@@ -932,4 +868,67 @@ return function()
 	    -- Start the SOLO loop
 	    runLoop(3)
 	end
+	
+	-- Rolling buffers (10 cycles) for roles 1 & 2 only
+	local cycleDurations10 = { [1] = {}, [2] = {} }
+	local lastCycleTime    = { [1] = nil, [2] = nil }
+	
+	-- Restart tokens for roles 1 & 2 only
+	local restartToken     = { [1] = 0, [2] = 0 }
+	
+	-- Force toggle off helper
+	local function forceToggleOff()
+	    -- Disconnect loop + win listener(s)
+	    if loopConnection and loopConnection.Connected then
+	        loopConnection:Disconnect()
+	        loopConnection = nil
+	    end
+	    if winConnection and winConnection.Connected then
+	        winConnection:Disconnect()
+	        winConnection = nil
+	    end
+	
+	    -- Disconnect HRP listeners if they exist
+	    if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
+	    if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
+	    hrp = nil
+	
+	    -- If you stored CharacterAdded in a variable, clean it too:
+	    if charAddedConn then charAddedConn:Disconnect() charAddedConn = nil end
+	
+	    -- Reset cycle tracking + restart tokens for roles 1 & 2 only
+	    for r = 1, 2 do
+	        cycleDurations10[r] = {}
+	        lastCycleTime[r] = nil
+	        restartToken[r] = 0
+	    end
+	
+	    -- Reset state flags
+	    activeRole = nil
+	    isActive = false
+	    won = false
+	    timeoutElapsed = false
+	
+	    -- Kill Role 1 watchdog threads cleanly
+	    role1WatchdogArmed = false
+	    watchdogToken[1] = (watchdogToken[1] or 0) + 1
+	
+	    -- If you have a solo monitor loop, this ensures it bails
+	    soloMonitorActive = false
+	
+	    -- UI feedback (guard in case buttons aren’t ready yet)
+	    if onOffButton then
+	        onOffButton.Text = "OFF"
+	        onOffButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+	    end
+	    if soloButton then
+	        soloButton.Text = "SOLO"
+	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
+	        soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
+	    end
+	
+	    print("Script stopped")
+	end
+
+	forceToggleOff()
 end
