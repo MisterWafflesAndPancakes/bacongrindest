@@ -757,21 +757,24 @@ return function()
 	            phaseStart += config.deathDelay
 	        end
 	
-	        -- respawn phase
-	        if phase == "respawn" then
-	            -- give HRP up to 5s to appear
-	            if hrp then
-	                if (role == 1 or role == 2) and recordCycle then
-	                    recordCycle(role)
-	                end
-	                phase = "wait"
-	                phaseStart = now
-	            elseif now >= phaseStart + 5 then
-	                warn("Respawn timeout, forcing wait phase")
-	                phase = "wait"
-	                phaseStart = now
-	            end
-	        end
+			elseif phase == "respawn" then
+			    local char = player.Character
+			    local humanoid = char and char:FindFirstChild("Humanoid")
+			    local newHrp = char and char:FindFirstChild("HumanoidRootPart")
+			
+			    if newHrp and humanoid and humanoid.Health > 0 then
+			        hrp = newHrp  -- update cached reference
+			        if (role == 1 or role == 2) and recordCycle then
+			            recordCycle(role)
+			        end
+			        phase = "wait"
+			        phaseStart = os.clock()
+			    elseif os.clock() >= phaseStart + 5 then
+			        warn("Respawn timeout, forcing wait phase")
+			        phase = "wait"
+			        phaseStart = os.clock()
+			    end
+			end
 	
 	        -- wait phase
 	        while phase == "wait" and now >= phaseStart + config.cycleDelay do
@@ -898,25 +901,12 @@ return function()
 	        if listenForWin then
 	            listenForWin(activeRole)
 	        else
-	            warn("validateAndAssignRole: listenForWin not assigned yet")
+	            warn("listenForWin not assigned yet")
 	        end
 	    end
 	end
 
-	-- Button connections
-	onOffButton.MouseButton1Click:Connect(function()
-	    if handleOnOffClick then
-	        handleOnOffClick()
-	    else
-	        print("ON/OFF clicked but handler not ready yet")
-	    end
-	end)
-	
-	soloButton.MouseButton1Click:Connect(function()
-	    if handleSoloClick then
-	        handleSoloClick()
-	    else
-	        print("SOLO clicked but handler not ready yet")
-	    end
-	end)
+	-- Button connections (at the very bottom of the script)
+	onOffButton.MouseButton1Click:Connect(handleOnOffClick)
+	soloButton.MouseButton1Click:Connect(handleSoloClick)
 end
