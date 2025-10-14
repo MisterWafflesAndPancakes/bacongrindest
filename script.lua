@@ -1,4 +1,5 @@
 return function()
+	-- [ LeBron James Endurance Script Mk.3 ]
 	-- Get Services
 	local RunService = game:GetService("RunService")
 	local UserInputService = game:GetService("UserInputService")
@@ -695,7 +696,7 @@ return function()
 	    local teleported = false
 	
 	    -- Track HRP without yielding (use top-level hrp/conn vars)
-	    local function updateHRP(char)               -- open updateHRP
+	    local function updateHRP(char)
 	        if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
 	        if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
 	        hrp = nil
@@ -790,39 +791,6 @@ return function()
 	        end
 	    end)
 	end
-		
-
-	-- Assign handlers
-	handleOnOffClick = function()
-	    if activeRole then
-	        forceToggleOff()
-	    else
-	        validateAndAssignRole()
-	    end
-	end
-	
-	handleSoloClick = function()
-	    -- Cleanly stop any existing loop/state
-	    forceToggleOff()
-	
-	    -- Explicitly set SOLO state
-	    activeRole, isActive = 3, true
-	    won, timeoutElapsed = false, false
-	
-	    -- Update button appearance
-	    onOffButton.Text = "SOLO mode: ON"
-	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-	    onOffButton.AutoButtonColor = false
-	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
-	
-	    -- Guard: ensure character is ready before first Solo cycle
-	    local char = player.Character or player.CharacterAdded:Wait()
-	    char:WaitForChild("Humanoid")
-	    char:WaitForChild("HumanoidRootPart")
-	
-	    -- Start the SOLO loop
-	    runLoop(3)
-	end
 	
 	-- Solo fallback block begins here
 	local Players = game:GetService("Players")
@@ -913,7 +881,35 @@ return function()
 	    end
 	end
 
-	-- Button connections (at the very bottom of the script)
-	onOffButton.MouseButton1Click:Connect(handleOnOffClick)
-	soloButton.MouseButton1Click:Connect(handleSoloClick)
+	-- Assign handlers
+	handleOnOffClick = function()
+	    if activeRole then
+	        forceToggleOff()
+	    else
+	        validateAndAssignRole()
+	    end
+	end
+	
+	handleSoloClick = function()
+	    -- Cleanly stop any existing loop/state
+	    forceToggleOff()
+		waitSeconds(1)
+	    -- Explicitly set SOLO state
+	    activeRole, isActive = 3, true
+	    won, timeoutElapsed = false, false
+	
+	    -- Update button appearance
+	    onOffButton.Text = "SOLO mode: ON"
+	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	    onOffButton.AutoButtonColor = false
+	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
+	
+	    -- Guard: ensure character is ready before first Solo cycle
+	    local char = player.Character or player.CharacterAdded:Wait()
+	    char:WaitForChild("Humanoid")
+	    char:WaitForChild("HumanoidRootPart")
+	
+	    -- Start the SOLO loop
+	    runLoop(3)
+	end
 end
