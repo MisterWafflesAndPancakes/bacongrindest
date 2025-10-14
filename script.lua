@@ -432,7 +432,38 @@ return function()
 	
 	    print("Script stopped")
 	end
+
+	-- Assign handlers
+	handleOnOffClick = function()
+	    if activeRole then
+	        forceToggleOff()
+	    else
+	        validateAndAssignRole()
+	    end
+	end
 	
+	handleSoloClick = function()
+	    -- Cleanly stop any existing loop/state
+	    forceToggleOff()
+	    -- Explicitly set SOLO state
+	    activeRole, isActive = 3, true
+	    won, timeoutElapsed = false, false
+	
+	    -- Update button appearance
+	    onOffButton.Text = "SOLO mode: ON"
+	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	    onOffButton.AutoButtonColor = false
+	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
+	
+	    -- Guard: ensure character is ready before first Solo cycle
+	    local char = player.Character or player.CharacterAdded:Wait()
+	    char:WaitForChild("Humanoid")
+	    char:WaitForChild("HumanoidRootPart")
+	
+	    -- Start the SOLO loop
+	    runLoop(3)
+	end
+
 	-- Button connections
 	onOffButton.MouseButton1Click:Connect(function()
 	    if handleOnOffClick then
@@ -896,36 +927,5 @@ return function()
 	            warn("listenForWin not assigned yet")
 	        end
 	    end
-	end
-
-	-- Assign handlers
-	handleOnOffClick = function()
-	    if activeRole then
-	        forceToggleOff()
-	    else
-	        validateAndAssignRole()
-	    end
-	end
-	
-	handleSoloClick = function()
-	    -- Cleanly stop any existing loop/state
-	    forceToggleOff()
-	    -- Explicitly set SOLO state
-	    activeRole, isActive = 3, true
-	    won, timeoutElapsed = false, false
-	
-	    -- Update button appearance
-	    onOffButton.Text = "SOLO mode: ON"
-	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-	    onOffButton.AutoButtonColor = false
-	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
-	
-	    -- Guard: ensure character is ready before first Solo cycle
-	    local char = player.Character or player.CharacterAdded:Wait()
-	    char:WaitForChild("Humanoid")
-	    char:WaitForChild("HumanoidRootPart")
-	
-	    -- Start the SOLO loop
-	    runLoop(3)
 	end
 end
