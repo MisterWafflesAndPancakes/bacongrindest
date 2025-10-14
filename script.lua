@@ -693,97 +693,101 @@ return function()
 	    local phaseStart = os.clock()
 	    local teleported = false
 	
-	    -- Track HRP without yielding (use top-level hrp/conn vars)
-	    local function updateHRP(char)
-	        if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
-	        if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
-	        hrp = nil
+	-- Track HRP without yielding (use top-level hrp/conn vars)
+	local function updateHRP(char)
+	    if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
+	    if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
+	    hrp = nil
 	
-	        if not char then return end
-	        hrp = char:FindFirstChild("HumanoidRootPart")
+	    if not char then return end
+	    hrp = char:FindFirstChild("HumanoidRootPart")
 	
-	        hrpAddedConn = char.ChildAdded:Connect(function(child)
-	            if child.Name == "HumanoidRootPart" then
-	                hrp = child
-	            end
-	        end)
-	
-	        hrpRemovedConn = char.ChildRemoved:Connect(function(child)
-	            if child == hrp then
-	                hrp = nil
-	            end
-	        end)
-	    end
-	
-	    if player.Character then
-	        updateHRP(player.Character)
-	    end
-	    charAddedConn = player.CharacterAdded:Connect(updateHRP)
-	
-	    if loopConnection and loopConnection.Connected then
-	        loopConnection:Disconnect()
-	        loopConnection = nil
-	    end
-	
-	    loopConnection = RunService.Heartbeat:Connect(function()
-	        if activeRole ~= role or not isActive then
-	            loopConnection:Disconnect()
-	            loopConnection = nil
-	            return
+	    hrpAddedConn = char.ChildAdded:Connect(function(child)
+	        if child.Name == "HumanoidRootPart" then
+	            hrp = child
 	        end
+	    end)
 	
-	        local now = os.clock()
-	
-	        -- teleport phase
-	        while phase == "teleport" and now >= phaseStart + config.teleportDelay do
-	            if hrp then
-	                hrp.CFrame = points[index]
-	                teleported = true
-	                phase = "kill"
-	            end
-	            phaseStart += config.teleportDelay
-	        end
-	
-	        -- kill phase
-	        while phase == "kill" and now >= phaseStart + config.deathDelay do
-	            if teleported then
-	                local char = player.Character
-	                if char then
-	                    pcall(function() char:BreakJoints() end)
-	                end
-	                teleported = false
-	                phase = "respawn"
-	            end
-	            phaseStart += config.deathDelay
-	        end
-	
-			elseif phase == "respawn" then
-			    local char = player.Character
-			    local humanoid = char and char:FindFirstChild("Humanoid")
-			    local newHrp = char and char:FindFirstChild("HumanoidRootPart")
-			
-			    if newHrp and humanoid and humanoid.Health > 0 then
-			        hrp = newHrp  -- update cached reference
-			        if (role == 1 or role == 2) and recordCycle then
-			            recordCycle(role)
-			        end
-			        phase = "wait"
-			        phaseStart = os.clock()
-			    elseif os.clock() >= phaseStart + 5 then
-			        warn("Respawn timeout, forcing wait phase")
-			        phase = "wait"
-			        phaseStart = os.clock()
-			    end
-			end
-	
-	        -- wait phase
-	        while phase == "wait" and now >= phaseStart + config.cycleDelay do
-	            phase = "teleport"
-	            phaseStart += config.cycleDelay
-	            index = index % #points + 1
+	    hrpRemovedConn = char.ChildRemoved:Connect(function(child)
+	        if child.Name == "HumanoidRootPart" and child == hrp then
+	            hrp = nil
 	        end
 	    end)
 	end
+	
+	if player.Character then
+	    updateHRP(player.Character)
+	end
+	charAddedConn = player.CharacterAdded:Connect(updateHRP)
+	
+	if loopConnection and loopConnection.Connected then
+	    loopConnection:Disconnect()
+	    loopConnection = nil
+	end
+	
+	loopConnection = RunService.Heartbeat:Connect(function()
+	    if activeRole ~= role or not isActive then
+	        if loopConnection and loopConnection.Connected then
+	            loopConnection:Disconnect()
+	        end
+	        loopConnection = nil
+	        return
+	    end
+	
+	    local now = os.clock()
+	
+	    -- teleport phase
+	    while phase == "teleport" and now >= phaseStart + config.teleportDelay do
+	        if hrp and points and points[index] then
+	            pcall(function()
+	                hrp.CFrame = points[index]
+	            end)
+	            teleported = true
+	            phase = "kill"
+	        end
+	        phaseStart += config.teleportDelay
+	    end
+	
+	    -- kill phase
+	    while phase == "kill" and now >= phaseStart + config.deathDelay do
+	        if teleported then
+	            local char = player.Character
+	            if char and char.Parent then
+	                pcall(function() char:BreakJoints() end)
+	            end
+	            teleported = false
+	            phase = "respawn"
+	        end
+	        phaseStart += config.deathDelay
+	    end
+	
+	    -- respawn phase
+	    if phase == "respawn" then
+	        local char = player.Character
+	        local humanoid = char and char:FindFirstChild("Humanoid")
+	        local newHrp = char and char:FindFirstChild("HumanoidRootPart")
+	
+	        if newHrp and humanoid and humanoid.Health > 0 then
+	            hrp = newHrp
+	            if (role == 1 or role == 2) and recordCycle then
+	                recordCycle(role)
+	            end
+	            phase = "wait"
+	            phaseStart = os.clock()
+	        elseif os.clock() >= phaseStart + 5 then
+	            warn("Respawn timeout, forcing wait phase")
+	            phase = "wait"
+	            phaseStart = os.clock()
+	        end
+	    end
+	
+	    -- wait phase
+	    while phase == "wait" and now >= phaseStart + config.cycleDelay do
+	        phase = "teleport"
+	        phaseStart += config.cycleDelay
+	        index = index % #points + 1
+	    end
+	end) -- close Heartbeat callback once, after all phases, you idiot!
 
 	-- Assign handlers
 	handleOnOffClick = function()
