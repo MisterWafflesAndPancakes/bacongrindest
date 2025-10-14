@@ -433,6 +433,23 @@ return function()
 	    print("Script stopped")
 	end
 	
+	-- Button connections
+	onOffButton.MouseButton1Click:Connect(function()
+	    if handleOnOffClick then
+	        handleOnOffClick()
+	    else
+	        print("ON/OFF clicked but handler not ready yet")
+	    end
+	end)
+
+	soloButton.MouseButton1Click:Connect(function()
+	    if handleSoloClick then
+	        handleSoloClick()
+	    else
+	        print("SOLO clicked but handler not ready yet")
+	    end
+	end)
+	
 	-- Cold start reset (initialise state once at load)
 	forceToggleOff()
 	
@@ -893,7 +910,6 @@ return function()
 	handleSoloClick = function()
 	    -- Cleanly stop any existing loop/state
 	    forceToggleOff()
-		waitSeconds(1)
 	    -- Explicitly set SOLO state
 	    activeRole, isActive = 3, true
 	    won, timeoutElapsed = false, false
@@ -912,8 +928,4 @@ return function()
 	    -- Start the SOLO loop
 	    runLoop(3)
 	end
-
-	-- Make button work pls 🥺
-	onOffButton.MouseButton1Click:Connect(handleOnOffClick)
-	soloButton.MouseButton1Click:Connect(handleSoloClick)
 end
