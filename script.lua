@@ -45,7 +45,7 @@ return function()
 	-- RemoteEvent reference (listen‑only)
 	local SoundEvent = ReplicatedStorage:WaitForChild("Sound", 5)
 	if not SoundEvent then
-		warn("❌ "Sound" RemoteEvent not found in ReplicatedStorage, win detection disabled.")
+		warn("❌ 'Sound' RemoteEvent not found in ReplicatedStorage, win detection disabled.")
 	end
 	
 	-- GUI Setup
@@ -404,7 +404,13 @@ return function()
 	    isActive = false
 	    won = false
 	    timeoutElapsed = false
+	
+	    -- Kill Role 1 watchdog threads cleanly
 	    role1WatchdogArmed = false
+	    watchdogToken[1] = (watchdogToken[1] or 0) + 1
+	
+	    -- If you have a solo monitor loop, this ensures it bails
+	    soloMonitorActive = false
 	
 	    -- UI feedback (guard in case buttons aren’t ready yet)
 	    if onOffButton then
