@@ -643,7 +643,7 @@ return function()
 	
 	    local config = configs[role]
 	    if not config then
-	        warn(("runLoop: missing config for role %s"):format(tostring(role)))
+	        warn(("Loop: missing config for role %s"):format(tostring(role)))
 	        return
 	    end
 	
@@ -652,41 +652,60 @@ return function()
 	    local phaseStart = os.clock() -- anchor to absolute time
 	    local teleported = false
 	
-	    -- track HRP without yielding
-	    local hrp
-	    local function updateHRP(char)
-	        if char then
-	            hrp = char:FindFirstChild("HumanoidRootPart")
-	            if not hrp then
-	                char.ChildAdded:Connect(function(child)
-	                    if child.Name == "HumanoidRootPart" then
-	                        hrp = child
-	                    end
-	                end)
-	            end
-	        end
-	    end
-	
-	    if player.Character then
-	        updateHRP(player.Character)
-	    end
-	    player.CharacterAdded:Connect(updateHRP)
-	
-	    if loopConnection and loopConnection.Connected then
-	        loopConnection:Disconnect()
-	        loopConnection = nil
-	    end
-	
-	    loopConnection = RunService.Heartbeat:Connect(function()
-	        if activeRole ~= role or not isActive then
-	            if loopConnection and loopConnection.Connected then
-	                loopConnection:Disconnect()
-	                loopConnection = nil
-	            end
-	            return
-	        end
-	
-	        local now = os.clock()
+		-- Track HRP without yielding (better version)
+		local hrp
+		local hrpAddedConn, hrpRemovedConn
+		
+		local function updateHRP(char)
+		    -- clean up old listeners
+		    if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
+		    if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
+		    hrp = nil
+		
+		    if not char then return end
+		
+		    -- try immediately
+		    hrp = char:FindFirstChild("HumanoidRootPart")
+		
+		    -- watch for future insertions
+		    hrpAddedConn = char.ChildAdded:Connect(function(child)
+		        if child.Name == "HumanoidRootPart" then
+		            hrp = child
+		        end
+		    end)
+		
+		    -- watch for removal
+		    hrpRemovedConn = char.ChildRemoved:Connect(function(child)
+		        if child == hrp then
+		            hrp = nil
+		        end
+		    end)
+		end
+		
+		-- initial + respawn tracking
+		if player.Character then
+		    updateHRP(player.Character)
+		end
+		player.CharacterAdded:Connect(updateHRP)
+		
+		-- heartbeat loop
+		if loopConnection and loopConnection.Connected then
+		    loopConnection:Disconnect()
+		    loopConnection = nil
+		end
+		
+		loopConnection = RunService.Heartbeat:Connect(function()
+		    if activeRole ~= role or not isActive then
+		        loopConnection:Disconnect()
+		        loopConnection = nil
+		        return
+		    end
+		
+		    if hrp then
+		        local now = os.clock()
+		        -- safe to use hrp here
+		    end
+		end)
 	
 	        -- Teleport phase
 	        if phase == "teleport" and now >= phaseStart + config.teleportDelay then
@@ -785,7 +804,7 @@ return function()
 	    end)
 	end
 	
-	-- Integration: only call if Role 1 is active
+	-- Integration: only call if Role 1 is active (this dosent work still for fucks sake, it even worked before, but why wont it now???)
 	if activeRole == 1 and isActive then
 	    local partnerName = usernameBox and usernameBox.Text or ""
 	    startSoloMonitor(partnerName)
