@@ -18,6 +18,12 @@ return function()
 	local getCycleAverage  
 	local switchToSolo
 	
+	-- Shared state for HRP tracking
+	local hrp
+	local hrpAddedConn
+	local hrpRemovedConn
+	local charAddedConn
+	
 	-- Handlers (assigned later)
 	local handleOnOffClick
 	local handleSoloClick
@@ -426,23 +432,6 @@ return function()
 	    print("Script stopped")
 	end
 	
-	-- Button connections
-	onOffButton.MouseButton1Click:Connect(function()
-	    if handleOnOffClick then
-	        handleOnOffClick()
-	    else
-	        print("ON/OFF clicked but handler not ready yet")
-	    end
-	end)
-	
-	soloButton.MouseButton1Click:Connect(function()
-	    if handleSoloClick then
-	        handleSoloClick()
-	    else
-	        print("SOLO clicked but handler not ready yet")
-	    end
-	end)
-	
 	-- Cold start reset (initialise state once at load)
 	forceToggleOff()
 	
@@ -704,10 +693,7 @@ return function()
 	    local phaseStart = os.clock()
 	    local teleported = false
 	
-	    -- Track HRP without yielding
-	    local hrp
-	    local hrpAddedConn, hrpRemovedConn
-	
+	    -- Track HRP without yielding (use top-level hrp/conn vars)
 	    local function updateHRP(char)
 	        if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
 	        if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
@@ -732,7 +718,7 @@ return function()
 	    if player.Character then
 	        updateHRP(player.Character)
 	    end
-	    player.CharacterAdded:Connect(updateHRP)
+	    charAddedConn = player.CharacterAdded:Connect(updateHRP)
 	
 	    if loopConnection and loopConnection.Connected then
 	        loopConnection:Disconnect()
@@ -771,7 +757,7 @@ return function()
 	            phaseStart += config.deathDelay
 	        end
 	
-	        -- rewspawn phase
+	        -- respawn phase
 	        if phase == "respawn" then
 	            -- give HRP up to 5s to appear
 	            if hrp then
@@ -796,6 +782,38 @@ return function()
 	    end)
 	end
 
+	-- Assign handlers
+	handleOnOffClick = function()
+	    if activeRole then
+	        forceToggleOff()
+	    else
+	        validateAndAssignRole()
+	    end
+	end
+	
+	handleSoloClick = function()
+	    -- Cleanly stop any existing loop/state
+	    forceToggleOff()
+	
+	    -- Explicitly set SOLO state
+	    activeRole, isActive = 3, true
+	    won, timeoutElapsed = false, false
+	
+	    -- Update button appearance
+	    onOffButton.Text = "SOLO mode: ON"
+	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	    onOffButton.AutoButtonColor = false
+	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
+	
+	    -- Guard: ensure character is ready before first Solo cycle
+	    local char = player.Character or player.CharacterAdded:Wait()
+	    char:WaitForChild("Humanoid")
+	    char:WaitForChild("HumanoidRootPart")
+	
+	    -- Start the SOLO loop
+	    runLoop(3)
+	end
+	
 	-- Solo fallback block begins here
 	local Players = game:GetService("Players")
 	local graceSeconds = 12
@@ -884,36 +902,21 @@ return function()
 	        end
 	    end
 	end
-	
-	-- Assign handlers
-	handleOnOffClick = function()
-	    if activeRole then
-	        forceToggleOff()
+
+	-- Button connections
+	onOffButton.MouseButton1Click:Connect(function()
+	    if handleOnOffClick then
+	        handleOnOffClick()
 	    else
-	        validateAndAssignRole()
+	        print("ON/OFF clicked but handler not ready yet")
 	    end
-	end
+	end)
 	
-	handleSoloClick = function()
-	    -- Cleanly stop any existing loop/state
-	    forceToggleOff()
-	
-	    -- Explicitly set SOLO state
-	    activeRole, isActive = 3, true
-	    won, timeoutElapsed = false, false
-	
-	    -- Update button appearance
-	    onOffButton.Text = "SOLO mode: ON"
-	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-	    onOffButton.AutoButtonColor = false
-	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
-	
-	    -- Guard: ensure character is ready before first Solo cycle
-	    local char = player.Character or player.CharacterAdded:Wait()
-	    char:WaitForChild("Humanoid")
-	    char:WaitForChild("HumanoidRootPart")
-	
-	    -- Start the SOLO loop
-	    runLoop(3)
-	end
+	soloButton.MouseButton1Click:Connect(function()
+	    if handleSoloClick then
+	        handleSoloClick()
+	    else
+	        print("SOLO clicked but handler not ready yet")
+	    end
+	end)
 end
