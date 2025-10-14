@@ -29,17 +29,23 @@ return function()
 	-- Cycle tracking (10‑cycle buffer only)
 	local cycleDurations10 = { [1] = {}, [2] = {} }
 	local lastCycleTime = { [1] = nil, [2] = nil }
-	
+
 	-- Drift‑proof wait helper
 	local function waitSeconds(seconds)
-		local start = os.clock()
-		repeat RunService.Heartbeat:Wait() until os.clock() - start >= seconds
+	    seconds = seconds or 0
+	    local start = os.clock()
+	    local elapsed = 0
+	    repeat
+	        RunService.Heartbeat:Wait()
+	        elapsed = os.clock() - start
+	    until elapsed >= seconds
+	    return elapsed -- return actual time waited
 	end
 	
 	-- RemoteEvent reference (listen‑only)
 	local SoundEvent = ReplicatedStorage:WaitForChild("Sound", 5)
 	if not SoundEvent then
-		warn("❌ 'Sound' RemoteEvent not found in ReplicatedStorage, win detection disabled.")
+		warn("❌ "Sound" RemoteEvent not found in ReplicatedStorage, win detection disabled.")
 	end
 	
 	-- GUI Setup
@@ -176,7 +182,7 @@ return function()
 					pcall(function()
 						game.ReplicatedStorage["Drink_Shake"]:InvokeServer("Toxic")
 					end)
-					task.wait(2)
+					task.wait(1.5)
 				end
 			end)
 		end
@@ -447,10 +453,15 @@ return function()
 	
 	-- Role 1 watchdog guard (per-session)
 	local role1WatchdogArmed = false
+	local watchdogToken = { [1] = 0 }  -- tokenised guard
 	
 	-- Rolling buffer (10 cycles) — ONLY roles 1 & 2
 	local cycleDurations10 = { [1] = {}, [2] = {} }
 	local lastCycleTime    = { [1] = nil, [2] = nil }
+	local lastWinTime      = { [1] = nil, [2] = nil } -- per-role win timestamps
+	
+	-- Debug toggle
+	local DEBUG = true
 	
 	-- Services
 	local RunService = game:GetService("RunService")
@@ -458,7 +469,7 @@ return function()
 	-- Restart Delay Parameters
 	local ROLE1_TIMEOUT       = 15   -- watchdog window before restart logic
 	local ROLE1_EXTRA_DELAY   = 10   -- added to average cycle
-	local ROLE1_MIN_DELAY     = 10  -- minimum enforced delay
+	local ROLE1_MIN_DELAY     = 10   -- minimum enforced delay
 	
 	local ROLE2_EXTRA_DELAY   = 25   -- added to average cycle
 	local ROLE2_MIN_DELAY     = 25   -- minimum enforced delay
@@ -533,7 +544,9 @@ return function()
 	
 	        -- Abort if superseded or role changed
 	        if restartToken[role] ~= token or activeRole ~= role then
-	            print(("ℹ️ Restart for role %d skipped (superseded or role changed)"):format(role))
+	            if DEBUG then
+	                print(("ℹ️ Restart for role %d skipped (superseded or role changed)"):format(role))
+	            end
 	            return
 	        end
 	
@@ -550,7 +563,9 @@ return function()
 	        if type(runLoop) == "function" then runLoop(role) end
 	        if type(listenForWin) == "function" then listenForWin(role) end
 	
-	        print(("🔄 Role %d restarted"):format(role))
+	        if DEBUG then
+	            print(("🔄 Role %d restarted"):format(role))
+	        end
 	    end)
 	end
 	
@@ -568,7 +583,46 @@ return function()
 	    if role == 1 then
 	        -- Reset state fresh each session
 	        won, timeoutElapsed = false, false
-	        local lastWinTime = nil
+	        lastWinTime[1] = nil
+	
+	        -- helper to arm watchdog
+	        local function armRole1Watchdog()
+	            watchdogToken[1] = (watchdogToken[1] or 0) + 1
+	            local token = watchdogToken[1]
+	            role1WatchdogArmed = true
+	            if DEBUG then
+	                print(("⌚ Role 1 watchdog armed (%ds window)"):format(ROLE1_TIMEOUT))
+	            end
+	
+	            task.spawn(function()
+	                local startTime = os.clock()
+	
+	                while os.clock() - startTime < ROLE1_TIMEOUT do
+	                    if activeRole ~= 1 or not role1WatchdogArmed or watchdogToken[1] ~= token then
+	                        return -- bail if role changed or cancelled
+	                    end
+	                    waitSeconds(0.1)
+	                end
+	
+	                -- Timeout only if no win occurred during this window
+	                if (not lastWinTime[1] or lastWinTime[1] < startTime) and activeRole == 1 and role1WatchdogArmed and watchdogToken[1] == token then
+	                    timeoutElapsed = true
+	                    local avg = getCycleAverage(1) or (configs[1] and configs[1].cycleDelay) or 0
+	                    local delay = computeRestartDelay(1, avg)
+	                    if DEBUG then
+	                        print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+%d)")
+	                            :format(delay, avg or 0, ROLE1_EXTRA_DELAY))
+	                    end
+	                    restartRole(1, delay)
+	                else
+	                    -- ✅ A win occurred → re‑arm for next cycle
+	                    if activeRole == 1 and watchdogToken[1] == token then
+	                        role1WatchdogArmed = false
+	                        armRole1Watchdog()
+	                    end
+	                end
+	            end)
+	        end
 	
 	        winConnection = SoundEvent.OnClientEvent:Connect(function(action, data)
 	            if activeRole ~= 1 then return end
@@ -576,35 +630,16 @@ return function()
 	                if data.Name == "Win" or data.Name == "WinP1" then
 	                    won = true
 	                    timeoutElapsed = false
-	                    lastWinTime = os.clock()
+	                    lastWinTime[1] = os.clock()
+	                    if DEBUG then
+	                        print("✅ Role 1 win detected at", lastWinTime[1])
+	                    end
 	                end
 	            end
 	        end)
 	
 	        if not role1WatchdogArmed and activeRole == 1 then
-	            role1WatchdogArmed = true
-	            print(("⌚ Role 1 watchdog armed (%ds window)"):format(ROLE1_TIMEOUT))
-	
-	            task.spawn(function()
-	                local startTime = os.clock()
-	
-	                while os.clock() - startTime < ROLE1_TIMEOUT do
-	                    if activeRole ~= 1 then
-	                        return -- bail if role changed
-	                    end
-	                    waitSeconds(0.1)
-	                end
-	
-	                -- Timeout only if no win occurred during the watchdog window
-	                if (not lastWinTime or lastWinTime < startTime) and activeRole == 1 then
-	                    timeoutElapsed = true
-	                    local avg = getCycleAverage(1) or (configs[1] and configs[1].cycleDelay) or 0
-	                    local delay = computeRestartDelay(1, avg)
-	                    print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+%d)")
-	                        :format(delay, avg or 0, ROLE1_EXTRA_DELAY))
-	                    restartRole(1, delay)
-	                end
-	            end)
+	            armRole1Watchdog()
 	        end
 	
 	    elseif role == 2 then
@@ -621,8 +656,10 @@ return function()
 	
 	                    local avg = getCycleAverage(2) or (configs[2] and configs[2].cycleDelay) or 0
 	                    local delay = computeRestartDelay(2, avg)
-	                    print(("⚠️ Role 2 win detected! restarting after %.2fs (avg=%.3f+%d, offset=%ds) [event=%s]")
-	                        :format(delay, avg or 0, ROLE2_EXTRA_DELAY, ROLE2_OFFSET, tostring(data.Name)))
+	                    if DEBUG then
+	                        print(("⚠️ Role 2 win detected! restarting after %.2fs (avg=%.3f+%d, offset=%ds) [event=%s]")
+	                            :format(delay, avg or 0, ROLE2_EXTRA_DELAY, ROLE2_OFFSET, tostring(data.Name)))
+	                    end
 	                    restartRole(2, delay)
 	                end
 	            end
@@ -753,6 +790,7 @@ return function()
 	    end)
 	end
 
+	-- Solo fallback block begins here
 	local Players = game:GetService("Players")
 	local graceSeconds = 12
 	
@@ -766,93 +804,27 @@ return function()
 	    end
 	end
 	
+	-- SOLO fallback monitor (simplified, reliable)
 	local function startSoloMonitor(partnerName)
 	    if activeRole ~= 1 or not isActive then return end
-	    if not partnerName or partnerName == "" then
-	        warn("⚠️ No partner name provided, switching to solo immediately")
-	        if handleSoloClick then task.defer(handleSoloClick) end
-	        return
-	    end
-	
-	    local stablePartnerId, graceEnd
-	    local inGrace, soloTriggered = false, false
-	    local rejoinConn
-	
-	    local function switchToSolo(reason)
-	        if soloTriggered then return end
-	        soloTriggered = true
-	        print(("⚠️ %s → switching to SOLO"):format(reason))
-	        if handleSoloClick then task.defer(handleSoloClick) end
-	        if rejoinConn then rejoinConn:Disconnect() rejoinConn = nil end
-	    end
-	
 	    task.spawn(function()
-	        while not soloTriggered and activeRole == 1 and isActive do
+	        local checkStart = os.clock()
+	        while activeRole == 1 and isActive do
 	            local partner = findPlayerByName(partnerName)
-	            if partner then
-	                stablePartnerId = stablePartnerId or partner.UserId
-	                inGrace, graceEnd = false, nil
-	            else
-	                if not inGrace then
-	                    print(("⚠️ Partner %s missing! %ds grace window started"):format(partnerName, graceSeconds))
-	                    inGrace, graceEnd = true, os.clock() + graceSeconds
-	                    if rejoinConn then rejoinConn:Disconnect() rejoinConn = nil end
-	                    rejoinConn = Players.PlayerAdded:Connect(function(newPlr)
-	                        if inGrace and (newPlr.UserId == stablePartnerId or newPlr.Name:lower() == partnerName:lower()) then
-	                            print("✅ Partner rejoined within timeframe.")
-	                            inGrace, graceEnd = false, nil
-	                            rejoinConn:Disconnect()
-	                            rejoinConn = nil
-	                        end
-	                    end)
-	                elseif os.clock() >= graceEnd then
-	                    switchToSolo("Partner did not return within grace window")
+	            if not partner then
+	                -- partner missing, check grace window
+	                if os.clock() - checkStart >= graceSeconds then
+	                    print("⚠️ Partner missing — switching to SOLO")
+	                    handleSoloClick() -- switch to solo mode
 	                    break
 	                end
+	            else
+	                -- reset timer if partner is present
+	                checkStart = os.clock()
 	            end
-	            task.wait(0.25)
+	            waitSeconds(0.5)
 	        end
 	    end)
-	end
-	
-	-- Role validation and assignment
-	local function validateAndAssignRole()
-	    local targetName = usernameBox.Text
-	    local roleCommand = roleBox.Text
-	    local targetPlayer = findPlayerByName(targetName)
-	
-	    if not targetPlayer or (roleCommand ~= "#AFK" and roleCommand ~= "#AFK2") then
-	        print("Validation failed")
-	        onOffButton.Text = "Validation failed"
-	        onOffButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-	        task.delay(3, function() forceToggleOff() end)
-	        return
-	    end
-	
-	    if roleCommand == "#AFK" then
-	        activeRole = 1
-	        role1WatchdogArmed = false
-	        startSoloMonitor(targetName)  -- start monitor here
-	    elseif roleCommand == "#AFK2" then
-	        activeRole = 2
-	    end
-	
-	    won, timeoutElapsed = false, false
-	    resetCycles(activeRole)
-	
-	    isActive = true
-	    onOffButton.Text = "ON"
-	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-	
-	    runLoop(activeRole)
-	
-	    if activeRole == 1 or activeRole == 2 then
-	        if listenForWin then
-	            listenForWin(activeRole)
-	        else
-	            warn("validateAndAssignRole: listenForWin not assigned yet")
-	        end
-	    end
 	end
 	
 	-- Reset cycle tracking for a given role (roles 1 & 2 only)
@@ -866,7 +838,7 @@ return function()
 	local function validateAndAssignRole()
 	    local targetName = usernameBox.Text
 	    local roleCommand = roleBox.Text
-	    local targetPlayer = findPlayerByName(targetName)  -- case-insensitive lookup
+	    local targetPlayer = findPlayerByName(targetName)
 	
 	    -- Validation
 	    if not targetPlayer or (roleCommand ~= "#AFK" and roleCommand ~= "#AFK2") then
@@ -881,7 +853,7 @@ return function()
 	    if roleCommand == "#AFK" then
 	        activeRole = 1
 	        role1WatchdogArmed = false
-	        startSoloMonitor(targetName)  -- start monitor here
+	        startSoloMonitor(targetName)  -- 🔹 start the solo monitor here
 	    elseif roleCommand == "#AFK2" then
 	        activeRole = 2
 	    end
@@ -902,7 +874,7 @@ return function()
 	        if listenForWin then
 	            listenForWin(activeRole)
 	        else
-	            warn("listenForWin not assigned yet")
+	            warn("validateAndAssignRole: listenForWin not assigned yet")
 	        end
 	    end
 	end
@@ -927,7 +899,7 @@ return function()
 	    -- Update button appearance
 	    onOffButton.Text = "SOLO mode: ON"
 	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-	    onOffButton.AutoButtonColor = false   -- prevent Roblox gray tint
+	    onOffButton.AutoButtonColor = false
 	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
 	
 	    -- Guard: ensure character is ready before first Solo cycle
