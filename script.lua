@@ -33,6 +33,10 @@ return function()
 	-- Adaptive restart state
 	local won = false  -- unified win flag (used for both roles)
 	local timeoutElapsed = false
+
+	-- Watchdog + solo state
+	local role1WatchdogArmed = false
+	local soloMonitorActive = false
 	
 	-- Create Tables
 	local cycleDurations10 = { [1] = {}, [2] = {} }
