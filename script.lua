@@ -34,11 +34,12 @@ return function()
 	local won = false  -- unified win flag (used for both roles)
 	local timeoutElapsed = false
 	
-	-- Cycle tracking (10‑cycle buffer only)
+	-- Create Tables
 	local cycleDurations10 = { [1] = {}, [2] = {} }
 	local lastCycleTime = { [1] = nil, [2] = nil }
 	local restartToken     = { [1] = 0, [2] = 0 }
-	
+	local watchdogToken = { [1] = 0 }
+
 	-- Drift‑proof wait helper
 	local function waitSeconds(seconds)
 	    seconds = seconds or 0
