@@ -378,6 +378,20 @@ return function()
 	        winConnection = nil
 	    end
 	
+	    -- Disconnect HRP/character listeners
+	    if charAddedConn and charAddedConn.Connected then
+	        charAddedConn:Disconnect()
+	        charAddedConn = nil
+	    end
+	    if hrpAddedConn and hrpAddedConn.Connected then
+	        hrpAddedConn:Disconnect()
+	        hrpAddedConn = nil
+	    end
+	    if hrpRemovedConn and hrpRemovedConn.Connected then
+	        hrpRemovedConn:Disconnect()
+	        hrpRemovedConn = nil
+	    end
+	
 	    -- Reset cycle tracking + restart tokens for roles 1 & 2 only
 	    for r = 1, 2 do
 	        cycleDurations10[r] = {}
@@ -397,11 +411,12 @@ return function()
 	        onOffButton.Text = "OFF"
 	        onOffButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
 	    end
-		if soloButton then
-		    soloButton.Text = "SOLO"
-		    soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
-		    soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
+	    if soloButton then
+	        soloButton.Text = "SOLO"
+	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
+	        soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
 	    end
+	
 	    print("Script stopped")
 	end
 	
@@ -719,7 +734,6 @@ return function()
 			        end
 			        phase = "wait"
 			    end
-			end
 	
 	        -- Waiting phase
 	        elseif phase == "wait" and now >= phaseStart + config.cycleDelay then
