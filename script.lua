@@ -889,4 +889,6 @@ return function()
 	
 	    runLoop(3)
 	end
+
+	forceToggleOff()
 end
