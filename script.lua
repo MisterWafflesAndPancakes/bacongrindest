@@ -712,14 +712,14 @@ return function()
 	            phaseStart += config.deathDelay
 	
 	        -- Respawn phase
-	        elseif phase == "respawn" then
-	            if hrp then
-	                if (role == 1 or role == 2) and recordCycle then
-	                    recordCycle(role)
-	                end
-	                phase = "wait"
-	                phaseStart = now -- anchor wait phase start
-	            end
+			elseif phase == "respawn" then
+			    if hrp then
+			        if (role == 1 or role == 2) and recordCycle then
+			            recordCycle(role)
+			        end
+			        phase = "wait"
+			    end
+			end
 	
 	        -- Waiting phase
 	        elseif phase == "wait" and now >= phaseStart + config.cycleDelay then
