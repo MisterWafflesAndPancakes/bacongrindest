@@ -17,8 +17,6 @@ return function()
 	local recordCycle
 	local getCycleAverage  
 	local switchToSolo
-	local soloMonitorTask
-	local soloMonitorTask
 	
 	-- Handlers (assigned later)
 	local handleOnOffClick
@@ -368,6 +366,7 @@ return function()
 	-- Restart tokens for roles 1 & 2 only
 	local restartToken     = { [1] = 0, [2] = 0 }
 	
+	-- Force toggle off helper
 	local function forceToggleOff()
 	    -- Disconnect loop + win listener(s)
 	    if loopConnection and loopConnection.Connected then
@@ -378,27 +377,6 @@ return function()
 	        winConnection:Disconnect()
 	        winConnection = nil
 	    end
-	
-	    -- Disconnect solo monitor listener if present
-	    if soloMonitorConn and soloMonitorConn.Connected then
-	        soloMonitorConn:Disconnect()
-	        soloMonitorConn = nil
-	    end
-	
-	    -- Disconnect HRP tracker listeners if present
-	    if hrpAddedConn and hrpAddedConn.Connected then
-	        hrpAddedConn:Disconnect()
-	        hrpAddedConn = nil
-	    end
-	    if hrpRemovedConn and hrpRemovedConn.Connected then
-	        hrpRemovedConn:Disconnect()
-	        hrpRemovedConn = nil
-	    end
-	    if charAddedConn and charAddedConn.Connected then
-	        charAddedConn:Disconnect()
-	        charAddedConn = nil
-	    end
-	    hrp = nil
 	
 	    -- Reset cycle tracking + restart tokens for roles 1 & 2 only
 	    for r = 1, 2 do
@@ -419,12 +397,11 @@ return function()
 	        onOffButton.Text = "OFF"
 	        onOffButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
 	    end
-	    if soloButton then
-	        soloButton.Text = "SOLO"
-	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
-	        soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
+		if soloButton then
+		    soloButton.Text = "SOLO"
+		    soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
+		    soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
 	    end
-	
 	    print("Script stopped")
 	end
 	
@@ -444,6 +421,9 @@ return function()
 	        print("SOLO clicked but handler not ready yet")
 	    end
 	end)
+	
+	-- Cold start reset (initialise state once at load)
+	forceToggleOff()
 	
 	-- Configs
 	local configs = {
@@ -672,42 +652,43 @@ return function()
 	    local phaseStart = os.clock() -- anchor to absolute time
 	    local teleported = false
 	
-		local hrp
-		local hrpAddedConn, hrpRemovedConn, charAddedConn
-		
-		local function bindHRP(char)
-			-- clean up old listeners
-			if hrpAddedConn then hrpAddedConn:Disconnect() hrpAddedConn = nil end
-			if hrpRemovedConn then hrpRemovedConn:Disconnect() hrpRemovedConn = nil end
-		
-			hrp = nil
-			if not char then return end
-		
-			-- grab immediately if present
-			hrp = char:FindFirstChild("HumanoidRootPart")
-		
-			-- watch for future add/remove
-			hrpAddedConn = char.ChildAdded:Connect(function(child)
-				if child.Name == "HumanoidRootPart" then
-					hrp = child
-				end
-			end)
-		
-			hrpRemovedConn = char.ChildRemoved:Connect(function(child)
-				if child == hrp then
-					hrp = nil
-				end
-			end)
-		end
-		
-		-- initial bind
-		if player.Character then
-			bindHRP(player.Character)
-		end
-		
-		-- rebind on respawn
-		if charAddedConn then charAddedConn:Disconnect() end
-		charAddedConn = player.CharacterAdded:Connect(bindHRP)
+	    -- HRP tracker (leak‑free)
+	    local hrp
+	    local hrpAddedConn, hrpRemovedConn, charAddedConn
+	
+	    local function bindHRP(char)
+	        if hrpAddedConn then hrpAddedConn:Disconnect(); hrpAddedConn = nil end
+	        if hrpRemovedConn then hrpRemovedConn:Disconnect(); hrpRemovedConn = nil end
+	        hrp = nil
+	        if not char then return end
+	
+	        hrp = char:FindFirstChild("HumanoidRootPart")
+	
+	        hrpAddedConn = char.ChildAdded:Connect(function(child)
+	            if child.Name == "HumanoidRootPart" then
+	                hrp = child
+	            end
+	        end)
+	
+	        hrpRemovedConn = char.ChildRemoved:Connect(function(child)
+	            if child == hrp then
+	                hrp = nil
+	            end
+	        end)
+	    end
+	
+	    if player.Character then
+	        bindHRP(player.Character)
+	    end
+	    charAddedConn = player.CharacterAdded:Connect(bindHRP)
+	
+	    -- Kill any old loop
+	    if loopConnection then loopConnection:Disconnect(); loopConnection = nil end
+	
+	    loopConnection = RunService.Heartbeat:Connect(function()
+	        if activeRole ~= role or not isActive then
+	            return -- just early‑out; keep connection alive until forceToggleOff
+	        end
 	
 	        local now = os.clock()
 	
@@ -717,7 +698,7 @@ return function()
 	                hrp.CFrame = points[index]
 	                teleported = true
 	                phase = "kill"
-	                phaseStart += config.teleportDelay  
+	                phaseStart += config.teleportDelay
 	            end
 	
 	        -- Kill phase
@@ -728,7 +709,7 @@ return function()
 	            end
 	            teleported = false
 	            phase = "respawn"
-	            phaseStart += config.deathDelay 
+	            phaseStart += config.deathDelay
 	
 	        -- Respawn phase
 	        elseif phase == "respawn" then
@@ -737,12 +718,13 @@ return function()
 	                    recordCycle(role)
 	                end
 	                phase = "wait"
+	                phaseStart = now -- anchor wait phase start
 	            end
 	
 	        -- Waiting phase
 	        elseif phase == "wait" and now >= phaseStart + config.cycleDelay then
 	            phase = "teleport"
-	            phaseStart += config.cycleDelay        
+	            phaseStart += config.cycleDelay
 	            index = index % #points + 1
 	        end
 	    end)
@@ -751,14 +733,23 @@ return function()
 	local Players = game:GetService("Players")
 	
 	local graceSeconds = 12
-	local soloMonitorConn -- keep reference so we can disconnect
 	
 	local function startSoloMonitor(partnerName)
-	    if activeRole ~= 1 or not isActive then return end
-	    if not partnerName or partnerName == "" then return end
+	    -- Only run if this client is Role 1 and active
+	    if activeRole ~= 1 or not isActive then
+	        return
+	    end
 	
-	    local stablePartnerId
-	    local graceEnd, inGrace, soloTriggered
+	    if not partnerName or partnerName == "" then
+	        warn("⚠️ No partner name provided, switching to solo immediately")
+	        if handleSoloClick then task.defer(handleSoloClick) end
+	        return
+	    end
+	
+	    local stablePartnerId = nil
+	    local graceEnd = nil
+	    local inGrace = false
+	    local soloTriggered = false
 	
 	    local function switchToSolo(reason)
 	        if soloTriggered then return end
@@ -769,15 +760,7 @@ return function()
 	
 	    task.spawn(function()
 	        while not soloTriggered and activeRole == 1 and isActive do
-	            -- case‑insensitive partner lookup
-	            local partner
-	            for _, plr in ipairs(Players:GetPlayers()) do
-	                if plr.Name:lower() == partnerName:lower() then
-	                    partner = plr
-	                    break
-	                end
-	            end
-	
+	            local partner = Players:FindFirstChild(partnerName)
 	            if partner then
 	                stablePartnerId = stablePartnerId or partner.UserId
 	                inGrace, graceEnd = false, nil
@@ -787,20 +770,14 @@ return function()
 	                    inGrace = true
 	                    graceEnd = os.clock() + graceSeconds
 	
-	                    if soloMonitorConn and soloMonitorConn.Connected then
-	                        soloMonitorConn:Disconnect()
-	                    end
-	
-	                    soloMonitorConn = Players.PlayerAdded:Connect(function(newPlr)
+	                    local conn
+	                    conn = Players.PlayerAdded:Connect(function(newPlr)
 	                        if not inGrace then return end
 	                        if (stablePartnerId and newPlr.UserId == stablePartnerId)
 	                           or newPlr.Name:lower() == partnerName:lower() then
 	                            print("✅ Partner rejoined within grace window, staying in duo mode")
 	                            inGrace, graceEnd = false, nil
-	                            if soloMonitorConn then
-	                                soloMonitorConn:Disconnect()
-	                                soloMonitorConn = nil
-	                            end
+	                            if conn then conn:Disconnect() end
 	                        end
 	                    end)
 	                elseif os.clock() >= graceEnd then
@@ -813,18 +790,20 @@ return function()
 	    end)
 	end
 	
-	-- Integration: call this when you actually assign Role 1
+	-- Reset cycle tracking for a given role (roles 1 & 2 only)
+	local function resetCycles(role)
+	    if role ~= 1 and role ~= 2 then return end
+	    cycleDurations10[role] = {}
+	    lastCycleTime[role] = nil
+	end
+	
+	-- Role validation and assignment
 	local function validateAndAssignRole()
 	    local targetName = usernameBox.Text
 	    local roleCommand = roleBox.Text
-	    local targetPlayer
-	    for _, plr in ipairs(Players:GetPlayers()) do
-	        if plr.Name:lower() == targetName:lower() then
-	            targetPlayer = plr
-	            break
-	        end
-	    end
+	    local targetPlayer = Players:FindFirstChild(targetName)
 	
+	    -- Validation
 	    if not targetPlayer or (roleCommand ~= "#AFK" and roleCommand ~= "#AFK2") then
 	        print("Validation failed")
 	        onOffButton.Text = "Validation failed"
@@ -833,13 +812,20 @@ return function()
 	        return
 	    end
 	
-	    if roleCommand == "#AFK" then
-	        activeRole = 1
-	        role1WatchdogArmed = false
-	        startSoloMonitor(targetName)
-	    elseif roleCommand == "#AFK2" then
-	        activeRole = 2
-	    end
+	    -- Assign role
+		if roleCommand == "#AFK" then
+		    activeRole = 1
+		    role1WatchdogArmed = false
+		    isActive = true
+		
+		    -- 🔑 Kick off solo fallback monitor here
+		    local partnerName = usernameBox and usernameBox.Text or ""
+		    startSoloMonitor(partnerName)
+		
+		elseif roleCommand == "#AFK2" then
+		    activeRole = 2
+		    isActive = true
+		end
 	
 	    -- Reset state + cycles
 	    won, timeoutElapsed = false, false
@@ -872,23 +858,26 @@ return function()
 	end
 	
 	handleSoloClick = function()
+	    -- Cleanly stop any existing loop/state
 	    forceToggleOff()
-	    task.wait(1)
+	    waitSeconds(1)
 	
+	    -- Explicitly set SOLO state
 	    activeRole, isActive = 3, true
 	    won, timeoutElapsed = false, false
 	
+	    -- Update button appearance
 	    onOffButton.Text = "SOLO mode: ON"
 	    onOffButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-	    onOffButton.AutoButtonColor = false
+	    onOffButton.AutoButtonColor = false   -- prevent Roblox gray tint
 	    onOffButton.TextColor3 = Color3.new(1, 1, 1)
 	
+	    -- Guard: ensure character is ready before first Solo cycle
 	    local char = player.Character or player.CharacterAdded:Wait()
 	    char:WaitForChild("Humanoid")
 	    char:WaitForChild("HumanoidRootPart")
 	
+	    -- Start the SOLO loop
 	    runLoop(3)
 	end
-
-	forceToggleOff()
 end
