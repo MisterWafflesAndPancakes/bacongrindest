@@ -53,7 +53,7 @@ return function()
 	mainContainer.Size = UDim2.new(0, 450, 0, 300) -- 40 for title + 260 for page
 	mainContainer.Position = UDim2.new(0.5, -225, 0.5, -190)
 	mainContainer.BackgroundColor3 = Color3.fromRGB(30, 30, 30) -- dark gray
-	mainContainer.BackgroundTransparency = 0.3                  -- semi-transparent
+	mainContainer.BackgroundTransparency = 0.3 -- semi-transparent
 	mainContainer.BorderSizePixel = 0
 	mainContainer.Parent = screenGui
 	
@@ -84,9 +84,9 @@ return function()
 	local titleLabel = Instance.new("TextLabel")
 	titleLabel.Size = UDim2.new(1, -50, 1, 0)
 	titleLabel.Position = UDim2.new(0, 0, 0, 0)
-	titleLabel.Text = "LeBron James Endurance Script"
+	titleLabel.Text = "LeBron James Endurance Script V3.5"
 	titleLabel.Font = Enum.Font.Arcade
-	titleLabel.TextSize = 24
+	titleLabel.TextSize = 20
 	titleLabel.TextColor3 = Color3.new(1, 1, 1)
 	titleLabel.BackgroundTransparency = 1 -- no box behind text
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
@@ -453,6 +453,7 @@ return function()
 	
 	-- Role 1 watchdog guard (per-session)
 	local role1WatchdogArmed = false
+	local role1WatchdogTask  -- task reference to allow cancel via token
 	
 	-- Rolling buffer (10 cycles) — ONLY roles 1 & 2
 	local cycleDurations10 = { [1] = {}, [2] = {} }
@@ -464,7 +465,7 @@ return function()
 	-- Restart Delay Parameters
 	local ROLE1_TIMEOUT       = 15   -- watchdog window before restart logic
 	local ROLE1_EXTRA_DELAY   = 10   -- added to average cycle
-	local ROLE1_MIN_DELAY     = 10  -- minimum enforced delay
+	local ROLE1_MIN_DELAY     = 10   -- minimum enforced delay
 	
 	local ROLE2_EXTRA_DELAY   = 25   -- added to average cycle
 	local ROLE2_MIN_DELAY     = 25   -- minimum enforced delay
@@ -487,9 +488,10 @@ return function()
 	    local last = lastCycleTime[role]
 	    if last then
 	        local duration = now - last
-	        table.insert(cycleDurations10[role], duration)
-	        if #cycleDurations10[role] > 10 then
-	            table.remove(cycleDurations10[role], 1)
+	        local buf = cycleDurations10[role]
+	        table.insert(buf, duration)
+	        if #buf > 10 then
+	            table.remove(buf, 1) -- trim oldest
 	        end
 	    end
 	    lastCycleTime[role] = now
@@ -510,6 +512,24 @@ return function()
 	-- Per-role restart token to prevent overlapping restarts — ONLY roles 1 & 2
 	local restartToken = { [1] = 0, [2] = 0 }
 	
+	-- Per-role win connections (avoid overlapping single global)
+	local winConnectionRole = { [1] = nil, [2] = nil }
+	
+	-- Helper: disconnect win listener for a role
+	local function disconnectWinListener(role)
+	    local conn = winConnectionRole[role]
+	    if conn and conn.Connected then
+	        conn:Disconnect()
+	    end
+	    winConnectionRole[role] = nil
+	end
+	
+	-- Helper: cancel role 1 watchdog task safely
+	local function cancelRole1Watchdog()
+	    role1WatchdogArmed = false
+	    role1WatchdogTask = nil -- task will naturally end when role changes; token gates ensure no action
+	end
+	
 	-- Restart a role after a delay, ensuring the old loop is stopped first
 	function restartRole(role, delay)
 	    -- SOLO mode: no restart logic
@@ -523,13 +543,17 @@ return function()
 	        loopConnection:Disconnect()
 	        loopConnection = nil
 	    end
-	    if winConnection and winConnection.Connected then
-	        winConnection:Disconnect()
-	        winConnection = nil
+	    disconnectWinListener(1)
+	    disconnectWinListener(2)
+	
+	    -- Cancel watchdog if we’re leaving role 1 context
+	    if role == 1 then
+	        cancelRole1Watchdog()
 	    end
 	
 	    isActive = false
 	
+	    -- Tokenize this role’s restart to prevent overlap
 	    restartToken[role] = (restartToken[role] or 0) + 1
 	    local token = restartToken[role]
 	
@@ -545,11 +569,12 @@ return function()
 	
 	        -- Reset averages and session flags for this role
 	        cycleDurations10[role] = {}
-	        lastCycleTime[role] = nil
-	        won, timeoutElapsed = false, false
+	        lastCycleTime[role]    = nil
+	        won, timeoutElapsed    = false, false
 	
 	        if role == 1 then
 	            role1WatchdogArmed = false -- allow watchdog to re-arm cleanly
+	            role1WatchdogTask  = nil
 	        end
 	
 	        isActive = true
@@ -566,17 +591,15 @@ return function()
 	        return
 	    end
 	
-	    if winConnection and winConnection.Connected then
-	        winConnection:Disconnect()
-	        winConnection = nil
-	    end
+	    -- Ensure only one listener per role
+	    disconnectWinListener(role)
 	
 	    if role == 1 then
 	        -- Reset state fresh each session
 	        won, timeoutElapsed = false, false
 	        local lastWinTime = nil
 	
-	        winConnection = SoundEvent.OnClientEvent:Connect(function(action, data)
+	        winConnectionRole[1] = SoundEvent.OnClientEvent:Connect(function(action, data)
 	            if activeRole ~= 1 then return end
 	            if action == "Play" and type(data) == "table" then
 	                if data.Name == "Win" or data.Name == "WinP1" then
@@ -587,13 +610,18 @@ return function()
 	            end
 	        end)
 	
+	        -- Arm watchdog once per session
 	        if not role1WatchdogArmed and activeRole == 1 then
 	            role1WatchdogArmed = true
 	            print(("⌚ Role 1 watchdog armed (%ds window)"):format(ROLE1_TIMEOUT))
 	
-	            task.spawn(function()
+	            -- Token snapshot to prevent acting after supersession
+	            local tokenSnapshot = restartToken[1]
+	
+	            role1WatchdogTask = task.spawn(function()
 	                local startTime = os.clock()
 	
+	                -- Poll for timeout window
 	                while os.clock() - startTime < ROLE1_TIMEOUT do
 	                    if activeRole ~= 1 then
 	                        return -- bail if role changed
@@ -601,31 +629,31 @@ return function()
 	                    waitSeconds(0.1)
 	                end
 	
-	                -- Timeout only if no win occurred during the watchdog window
-	                if (not lastWinTime or lastWinTime < startTime) and activeRole == 1 then
-	                    timeoutElapsed = true
-	                    local avg = getCycleAverage(1) or (configs[1] and configs[1].cycleDelay) or 0
-	                    local delay = computeRestartDelay(1, avg)
-	                    print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+%d)")
-	                        :format(delay, avg or 0, ROLE1_EXTRA_DELAY))
-	                    restartRole(1, delay)
+	                -- Only act if still same session/token and no win occurred
+	                if activeRole == 1 and restartToken[1] == tokenSnapshot then
+	                    if (not lastWinTime or lastWinTime < startTime) then
+	                        timeoutElapsed = true
+	                        local avg   = getCycleAverage(1) or (configs[1] and configs[1].cycleDelay) or 0
+	                        local delay = computeRestartDelay(1, avg)
+	                        print(("⚠️ Role 1 timed out! restarting after %.2fs (avg=%.3f+%d)")
+	                            :format(delay, avg or 0, ROLE1_EXTRA_DELAY))
+	                        restartRole(1, delay)
+	                    end
 	                end
 	            end)
 	        end
 	
 	    elseif role == 2 then
-	        winConnection = SoundEvent.OnClientEvent:Connect(function(action, data)
+	        winConnectionRole[2] = SoundEvent.OnClientEvent:Connect(function(action, data)
 	            if activeRole ~= 2 then return end
 	            if action == "Play" and type(data) == "table" then
 	                if data.Name == "WinP2" or data.Name == "Win" then
 	                    won = true
 	
-	                    if winConnection and winConnection.Connected then
-	                        winConnection:Disconnect()
-	                        winConnection = nil
-	                    end
+	                    -- Disconnect immediately to avoid repeated restarts
+	                    disconnectWinListener(2)
 	
-	                    local avg = getCycleAverage(2) or (configs[2] and configs[2].cycleDelay) or 0
+	                    local avg   = getCycleAverage(2) or (configs[2] and configs[2].cycleDelay) or 0
 	                    local delay = computeRestartDelay(2, avg)
 	                    print(("⚠️ Role 2 win detected! restarting after %.2fs (avg=%.3f+%d, offset=%ds) [event=%s]")
 	                        :format(delay, avg or 0, ROLE2_EXTRA_DELAY, ROLE2_OFFSET, tostring(data.Name)))
