@@ -358,7 +358,8 @@ return function()
 			enduranceLabel.Text = "Endurance: not found"
 		end
 	end)
-	
+
+	--OFF function
 	local function forceToggleOff()
 	    -- Disconnect loop + win listener(s)
 	    if loopConnection and loopConnection.Connected then
@@ -764,14 +765,13 @@ return function()
 	    end)
 	end
 
-	--Solo FallBack
+	--Solo fallback
 	local Players = game:GetService("Players")
 	
 	local graceSeconds = 12
-	local soloMonitorToken = 0 -- token to cancel old monitors
+	local soloMonitorToken = 0
 	
 	local function startSoloMonitor(partnerName)
-	    -- Only run if this client is Role 1 and active
 	    if activeRole ~= 1 or not isActive then
 	        return
 	    end
@@ -785,8 +785,8 @@ return function()
 	    soloMonitorToken += 1
 	    local myToken = soloMonitorToken
 	
-	    local stablePartnerId = nil
-	    local graceEnd = nil
+	    local stablePartnerId
+	    local graceEnd
 	    local inGrace = false
 	    local soloTriggered = false
 	    local conn -- PlayerAdded connection
@@ -837,6 +837,11 @@ return function()
 	            task.wait(0.25)
 	        end
 	        cleanup()
+	
+	        -- If loop ended without triggering solo, make sure we’re consistent
+	        if not soloTriggered and myToken == soloMonitorToken then
+	            print("ℹ️ Solo monitor ended without triggering")
+	        end
 	    end)
 	end
 	
