@@ -359,14 +359,6 @@ return function()
 		end
 	end)
 	
-	-- Rolling buffers (10 cycles) for roles 1 & 2 only
-	local cycleDurations10 = { [1] = {}, [2] = {} }
-	local lastCycleTime    = { [1] = nil, [2] = nil }
-	
-	-- Restart tokens for roles 1 & 2 only
-	local restartToken     = { [1] = 0, [2] = 0 }
-	
-	-- Force toggle off helper
 	local function forceToggleOff()
 	    -- Disconnect loop + win listener(s)
 	    if loopConnection and loopConnection.Connected then
@@ -376,6 +368,13 @@ return function()
 	    if winConnection and winConnection.Connected then
 	        winConnection:Disconnect()
 	        winConnection = nil
+	    end
+	    -- If using per-role win connections
+	    for r = 1, 2 do
+	        if winConnectionRole and winConnectionRole[r] and winConnectionRole[r].Connected then
+	            winConnectionRole[r]:Disconnect()
+	            winConnectionRole[r] = nil
+	        end
 	    end
 	
 	    -- Disconnect HRP/character listeners
@@ -391,6 +390,14 @@ return function()
 	        hrpRemovedConn:Disconnect()
 	        hrpRemovedConn = nil
 	    end
+	    hrp = nil
+	
+	    -- Cancel solo monitor
+	    soloMonitorToken = (soloMonitorToken or 0) + 1
+	    if soloMonitorConn and soloMonitorConn.Connected then
+	        soloMonitorConn:Disconnect()
+	        soloMonitorConn = nil
+	    end
 	
 	    -- Reset cycle tracking + restart tokens for roles 1 & 2 only
 	    for r = 1, 2 do
@@ -405,37 +412,22 @@ return function()
 	    won = false
 	    timeoutElapsed = false
 	    role1WatchdogArmed = false
+	    role1WatchdogTask = nil
+	    role1WatchdogToken = (role1WatchdogToken or 0) + 1 -- invalidate any running watchdog
 	
-	    -- UI feedback (guard in case buttons aren’t ready yet)
+	    -- UI feedback
 	    if onOffButton then
 	        onOffButton.Text = "OFF"
 	        onOffButton.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
 	    end
 	    if soloButton then
 	        soloButton.Text = "SOLO"
-	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255) -- bright blue, not gray
-	        soloButton.AutoButtonColor = false -- stop Roblox from tinting it gray
+	        soloButton.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	        soloButton.AutoButtonColor = false
 	    end
 	
 	    print("Script stopped")
 	end
-	
-	-- Button connections
-	onOffButton.MouseButton1Click:Connect(function()
-	    if handleOnOffClick then
-	        handleOnOffClick()
-	    else
-	        print("ON/OFF clicked but handler not ready yet")
-	    end
-	end)
-	
-	soloButton.MouseButton1Click:Connect(function()
-	    if handleSoloClick then
-	        handleSoloClick()
-	    else
-	        print("SOLO clicked but handler not ready yet")
-	    end
-	end)
 	
 	-- Cold start reset (initialise state once at load)
 	forceToggleOff()
@@ -771,10 +763,12 @@ return function()
 	        end
 	    end)
 	end
-	
+
+	--Solo FallBack
 	local Players = game:GetService("Players")
 	
 	local graceSeconds = 12
+	local soloMonitorToken = 0 -- token to cancel old monitors
 	
 	local function startSoloMonitor(partnerName)
 	    -- Only run if this client is Role 1 and active
@@ -788,38 +782,51 @@ return function()
 	        return
 	    end
 	
+	    soloMonitorToken += 1
+	    local myToken = soloMonitorToken
+	
 	    local stablePartnerId = nil
 	    local graceEnd = nil
 	    local inGrace = false
 	    local soloTriggered = false
+	    local conn -- PlayerAdded connection
+	
+	    local function cleanup()
+	        if conn and conn.Connected then
+	            conn:Disconnect()
+	        end
+	        conn = nil
+	    end
 	
 	    local function switchToSolo(reason)
 	        if soloTriggered then return end
 	        soloTriggered = true
+	        cleanup()
 	        print(("⚠️ %s → switching to SOLO"):format(reason))
 	        if handleSoloClick then task.defer(handleSoloClick) end
 	    end
 	
 	    task.spawn(function()
-	        while not soloTriggered and activeRole == 1 and isActive do
+	        while not soloTriggered and activeRole == 1 and isActive and myToken == soloMonitorToken do
 	            local partner = Players:FindFirstChild(partnerName)
 	            if partner then
 	                stablePartnerId = stablePartnerId or partner.UserId
 	                inGrace, graceEnd = false, nil
+	                cleanup()
 	            else
 	                if not inGrace then
 	                    print(("⚠️ Partner %s missing! %ds grace window started"):format(partnerName, graceSeconds))
 	                    inGrace = true
 	                    graceEnd = os.clock() + graceSeconds
 	
-	                    local conn
+	                    cleanup()
 	                    conn = Players.PlayerAdded:Connect(function(newPlr)
-	                        if not inGrace then return end
+	                        if not inGrace or myToken ~= soloMonitorToken then return end
 	                        if (stablePartnerId and newPlr.UserId == stablePartnerId)
 	                           or newPlr.Name:lower() == partnerName:lower() then
 	                            print("✅ Partner rejoined within grace window, staying in duo mode")
 	                            inGrace, graceEnd = false, nil
-	                            if conn then conn:Disconnect() end
+	                            cleanup()
 	                        end
 	                    end)
 	                elseif os.clock() >= graceEnd then
@@ -829,6 +836,7 @@ return function()
 	            end
 	            task.wait(0.25)
 	        end
+	        cleanup()
 	    end)
 	end
 	
